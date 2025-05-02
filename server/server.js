@@ -1,11 +1,11 @@
-// server.js
+// server-sql.js
+// Version du serveur Node.js adapté pour une base de données SQL plutôt que MongoDB
 const express = require('express');
 const { SerialPort } = require('serialport');
 const { ReadlineParser } = require('@serialport/parser-readline');
-const mongoose = require('mongoose');
+const mysql = require('mysql2/promise'); // Utiliser mysql2 avec support des promesses
 const moment = require('moment');
 const cors = require('cors');
-const pm2 = require('pm2');
 
 // Configuration
 const app = express();
@@ -13,38 +13,24 @@ const PORT = process.env.PORT || 3000;
 const SERIAL_PORT = process.env.SERIAL_PORT || 'COM3'; // Ajustez selon votre port Arduino
 const BAUD_RATE = 9600;
 
+// Configuration de la base de données
+const dbConfig = {
+  host: 'localhost',
+  user: 'root',          // Remplacez par votre utilisateur MySQL
+  password: '',          // Remplacez par votre mot de passe MySQL
+  database: 'rfid_access_system',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+};
+
+// Créer un pool de connexions à la base de données
+const pool = mysql.createPool(dbConfig);
+
 // Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Connexion à MongoDB
-mongoose.connect('mongodb://localhost:27017/rfid_access_system', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log('Connexion à MongoDB réussie'))
-.catch(err => console.error('Erreur de connexion à MongoDB:', err));
-
-// Schémas et modèles
-const userSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  cardId: { type: String, required: true, unique: true },
-  role: { type: String, default: 'user' },
-  authorized: { type: Boolean, default: true },
-  createdAt: { type: Date, default: Date.now }
-});
-
-const accessLogSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  cardId: { type: String, required: true },
-  direction: { type: String, enum: ['entry', 'exit'], required: true },
-  timestamp: { type: Date, default: Date.now },
-  authorized: { type: Boolean, required: true }
-});
-
-const User = mongoose.model('User', userSchema);
-const AccessLog = mongoose.model('AccessLog', accessLogSchema);
 
 // Configuration de la communication série avec Arduino
 const serialPort = new SerialPort({ path: SERIAL_PORT, baudRate: BAUD_RATE });
@@ -68,17 +54,19 @@ parser.on('data', async (data) => {
       const direction = parts[2].trim().toLowerCase() === 'in' ? 'entry' : 'exit';
       
       // Vérifier si l'utilisateur existe et est autorisé
-      const user = await User.findOne({ cardId });
-      const authorized = user && user.authorized;
+      const [users] = await pool.query(
+        'SELECT user_id, authorized FROM users WHERE card_id = ?',
+        [cardId]
+      );
+      
+      const user = users.length > 0 ? users[0] : null;
+      const authorized = user ? user.authorized : false;
       
       // Enregistrer l'accès
-      const accessLog = new AccessLog({
-        userId: user ? user._id : null,
-        cardId,
-        direction,
-        authorized
-      });
-      await accessLog.save();
+      await pool.query(
+        'INSERT INTO access_logs (user_id, card_id, direction, authorized) VALUES (?, ?, ?, ?)',
+        [user ? user.user_id : null, cardId, direction, authorized]
+      );
       
       // Envoyer la réponse à Arduino
       const response = authorized ? 'ALLOW' : 'DENY';
@@ -94,7 +82,7 @@ parser.on('data', async (data) => {
 // Routes API
 app.get('/api/users', async (req, res) => {
   try {
-    const users = await User.find({});
+    const [users] = await pool.query('SELECT * FROM users');
     res.json(users);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -104,9 +92,13 @@ app.get('/api/users', async (req, res) => {
 app.post('/api/users', async (req, res) => {
   try {
     const { name, cardId, role, authorized } = req.body;
-    const user = new User({ name, cardId, role, authorized });
-    await user.save();
-    res.status(201).json(user);
+    const [result] = await pool.query(
+      'INSERT INTO users (name, card_id, role, authorized) VALUES (?, ?, ?, ?)',
+      [name, cardId, role || 'user', authorized !== undefined ? authorized : true]
+    );
+    
+    const [newUser] = await pool.query('SELECT * FROM users WHERE user_id = ?', [result.insertId]);
+    res.status(201).json(newUser[0]);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -115,12 +107,17 @@ app.post('/api/users', async (req, res) => {
 app.put('/api/users/:id', async (req, res) => {
   try {
     const { name, cardId, role, authorized } = req.body;
-    const user = await User.findByIdAndUpdate(
-      req.params.id,
-      { name, cardId, role, authorized },
-      { new: true }
+    await pool.query(
+      'UPDATE users SET name = ?, card_id = ?, role = ?, authorized = ? WHERE user_id = ?',
+      [name, cardId, role, authorized, req.params.id]
     );
-    res.json(user);
+    
+    const [updatedUser] = await pool.query('SELECT * FROM users WHERE user_id = ?', [req.params.id]);
+    if (updatedUser.length === 0) {
+      return res.status(404).json({ error: 'Utilisateur non trouvé' });
+    }
+    
+    res.json(updatedUser[0]);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -128,7 +125,7 @@ app.put('/api/users/:id', async (req, res) => {
 
 app.delete('/api/users/:id', async (req, res) => {
   try {
-    await User.findByIdAndDelete(req.params.id);
+    await pool.query('DELETE FROM users WHERE user_id = ?', [req.params.id]);
     res.status(204).end();
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -138,20 +135,27 @@ app.delete('/api/users/:id', async (req, res) => {
 app.get('/api/access-logs', async (req, res) => {
   try {
     const { startDate, endDate, cardId } = req.query;
-    const query = {};
+    let query = 'SELECT al.*, u.name, u.role FROM access_logs al LEFT JOIN users u ON al.user_id = u.user_id WHERE 1=1';
+    const params = [];
     
-    if (cardId) query.cardId = cardId;
-    
-    if (startDate || endDate) {
-      query.timestamp = {};
-      if (startDate) query.timestamp.$gte = new Date(startDate);
-      if (endDate) query.timestamp.$lte = new Date(endDate);
+    if (cardId) {
+      query += ' AND al.card_id = ?';
+      params.push(cardId);
     }
     
-    const logs = await AccessLog.find(query)
-      .populate('userId', 'name role')
-      .sort({ timestamp: -1 });
-      
+    if (startDate) {
+      query += ' AND al.timestamp >= ?';
+      params.push(new Date(startDate));
+    }
+    
+    if (endDate) {
+      query += ' AND al.timestamp <= ?';
+      params.push(new Date(endDate));
+    }
+    
+    query += ' ORDER BY al.timestamp DESC';
+    
+    const [logs] = await pool.query(query, params);
     res.json(logs);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -160,22 +164,29 @@ app.get('/api/access-logs', async (req, res) => {
 
 app.get('/api/stats', async (req, res) => {
   try {
-    const today = moment().startOf('day');
+    const today = moment().startOf('day').format('YYYY-MM-DD HH:mm:ss');
     
-    const todayEntries = await AccessLog.countDocuments({
-      direction: 'entry',
-      authorized: true,
-      timestamp: { $gte: today.toDate() }
-    });
+    // Nombre d'entrées aujourd'hui
+    const [entries] = await pool.query(
+      'SELECT COUNT(*) as count FROM access_logs WHERE direction = ? AND authorized = ? AND timestamp >= ?',
+      ['entry', 1, today]
+    );
+    const todayEntries = entries[0].count;
     
-    const todayExits = await AccessLog.countDocuments({
-      direction: 'exit',
-      authorized: true,
-      timestamp: { $gte: today.toDate() }
-    });
+    // Nombre de sorties aujourd'hui
+    const [exits] = await pool.query(
+      'SELECT COUNT(*) as count FROM access_logs WHERE direction = ? AND authorized = ? AND timestamp >= ?',
+      ['exit', 1, today]
+    );
+    const todayExits = exits[0].count;
     
-    const totalUsers = await User.countDocuments();
-    const authorizedUsers = await User.countDocuments({ authorized: true });
+    // Nombre total d'utilisateurs
+    const [totalUsersResult] = await pool.query('SELECT COUNT(*) as count FROM users');
+    const totalUsers = totalUsersResult[0].count;
+    
+    // Nombre d'utilisateurs autorisés
+    const [authorizedUsersResult] = await pool.query('SELECT COUNT(*) as count FROM users WHERE authorized = ?', [1]);
+    const authorizedUsers = authorizedUsersResult[0].count;
     
     res.json({
       todayEntries,
@@ -189,7 +200,31 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
+// Fonction pour vérifier la connexion à la base de données
+const testDatabaseConnection = async () => {
+  try {
+    const connection = await pool.getConnection();
+    console.log('Connexion à la base de données réussie');
+    connection.release();
+    return true;
+  } catch (error) {
+    console.error('Erreur de connexion à la base de données:', error);
+    return false;
+  }
+};
+
 // Démarrage du serveur
-app.listen(PORT, () => {
-  console.log(`Serveur démarré sur le port ${PORT}`);
-});
+const startServer = async () => {
+  const dbConnected = await testDatabaseConnection();
+  
+  if (dbConnected) {
+    app.listen(PORT, () => {
+      console.log(`Serveur démarré sur le port ${PORT}`);
+    });
+  } else {
+    console.error('Impossible de démarrer le serveur sans connexion à la base de données');
+    process.exit(1);
+  }
+};
+
+startServer();
