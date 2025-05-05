@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contrôle d'Accès RFID - Locaux Sécurisés</title>
+  <link rel="stylesheet" href="main.css" />
+</head>
+<body>
+  <header>
+    <h1>Système de Contrôle d'Accès RFID</h1>
+    <h2>Locaux Sécurisés - Interface Web</h2>
+  </header>
+
+  <main>
+    <section class="status">
+      <h3>Dernier badge scanné :</h3>
+      <p id="badge-id">Etat:</p>
+
+      <h3>État de la porte :</h3>
+      <p id="door-status">En attente...</p>
+    </section>
+
+    <section class="history">
+      <h3>Historique des accès :</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Date & Heure</th>
+            <th>Badge</th>
+            <th>Résultat</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody id="access-history">
+          <!-- Préparation pour 5 entrées maximum -->
+          <tr><td colspan="4">En attente de données...</td></tr>
+          <tr style="display: none;"></tr>
+          <tr style="display: none;"></tr>
+          <tr style="display: none;"></tr>
+          <tr style="display: none;"></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <footer>
+    <p>&copy; 2025 Système RFID - Client Locaux Sécurisés</p>
+  </footer>
+</body>
+</html>

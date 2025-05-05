@@ -3,9 +3,10 @@
 const express = require('express');
 const { SerialPort } = require('serialport');
 const { ReadlineParser } = require('@serialport/parser-readline');
-const mysql = require('mysql2/promise'); // Utiliser mysql2 avec support des promesses
+const mysql = require('mysql2/promise'); // Utiliser mysql avec support des promesses
 const moment = require('moment');
 const cors = require('cors');
+const pm2 = require('pm2');
 
 // Configuration
 const app = express();
@@ -15,13 +16,10 @@ const BAUD_RATE = 9600;
 
 // Configuration de la base de données
 const dbConfig = {
-  host: 'localhost',
-  user: 'root',          // Remplacez par votre utilisateur MySQL
-  password: '',          // Remplacez par votre mot de passe MySQL
-  database: 'rfid_access_system',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
+  host: '192.168.64.175',
+  user: 'site1',          // Remplacez par votre utilisateur MySQL
+  password: 'yuzu007',          // Remplacez par votre mot de passe MySQL
+  database: 'rfid',
 };
 
 // Créer un pool de connexions à la base de données
