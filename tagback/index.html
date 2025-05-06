@@ -47,5 +47,37 @@
   <footer>
     <p>&copy; 2025 Système RFID - Client Locaux Sécurisés</p>
   </footer>
+  <script>
+    async function refreshStatus() {
+      try {
+        const res = await fetch("/api/status");
+        const data = await res.json();
+
+        document.getElementById("badge-id").textContent = data.dernierUID || "Aucun badge détecté";
+        document.getElementById("door-status").textContent =
+          ["A1B2C3D4", "12345678"].includes(data.dernierUID) ? "Accès autorisé" : "Accès refusé";
+
+        const tbody = document.getElementById("access-history");
+        tbody.innerHTML = "";
+
+        data.historique.forEach(entry => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${entry.datetime}</td>
+            <td>${entry.uid}</td>
+            <td>${entry.result}</td>
+            <td>${entry.source}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+      } catch (err) {
+        console.error("Erreur de connexion au serveur", err);
+      }
+    }
+
+    setInterval(refreshStatus, 2000); // Rafraîchit toutes les 2 secondes
+    refreshStatus(); // Appel initial
+  </script>
 </body>
 </html>

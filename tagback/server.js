@@ -1,59 +1,62 @@
 const express = require("express");
-const SerialPort = require("serialport").SerialPort;
-const ReadlineParser = require("@serialport/parser-readline").ReadlineParser;
+const { SerialPort } = require("serialport");
+const { ReadlineParser } = require("@serialport/parser-readline");
+const path = require("path");
 
 const app = express();
 const portHttp = 8000;
 
-// Remplace par le port correct (trouvé avec `SerialPort.list()`)
+let dernierUID = null;
+let historique = []; // Pour les 5 derniers accès
+
 const portSerie = new SerialPort({
-  path: "/dev/ttyACM0", // ou "COM3" sur Windows & sur Linux c'est /dev/ttyUSB0
+  path: "/dev/ttyACM0", // Adapter selon ta machine
   baudRate: 9600,
-  autoOpen: false // Laisse l'ouverture du port série manuelle
+  autoOpen: false
 });
 
-// Parse les données reçues ligne par ligne
 const parser = portSerie.pipe(new ReadlineParser({ delimiter: "\n" }));
 
-// Quand on reçoit des données de l'Arduino
 parser.on("data", (data) => {
-  console.log("Données reçues de l'Arduino :", data);
+  const uid = data.trim().toUpperCase();
+  const maintenant = new Date().toLocaleString("fr-FR");
+
+  console.log("UID reçu :", uid);
+  dernierUID = uid;
+
+  const estAutorise = ["A1B2C3D4", "12345678"].includes(uid); // Exemple
+  const resultat = estAutorise ? "Autorisé" : "Refusé";
+
+  historique.unshift({
+    datetime: maintenant,
+    uid: uid,
+    result: resultat,
+    source: "Arduino"
+  });
+
+  if (historique.length > 5) historique.pop();
 });
 
-// Ouvre le port série lorsque le serveur démarre
 portSerie.open((err) => {
-  if (err) {
-    console.log("Erreur d'ouverture du port série:", err);
-  } else {
-    console.log("Port série ouvert avec succès.");
-  }
+  if (err) console.error("Erreur port série:", err);
+  else console.log("✅ Port série connecté.");
 });
 
-// Exemple : endpoint HTTP pour envoyer une commande à l'Arduino
-app.get("/api/led/on", (req, res) => {
-  portSerie.write("ON\n", (err) => {
-    if (err) {
-      console.error("Erreur en envoyant la commande", err);
-      return res.status(500).send("Erreur en envoyant la commande à l'Arduino");
-    }
-    console.log("Commande LED ON envoyée");
-    res.send("Commande LED ON envoyée à l'Arduino");
+app.use(express.static(path.join(__dirname, "public"))); // Servir HTML/CSS/JS
+
+// API pour dernier badge
+app.get("/api/dernier-uid", (req, res) => {
+  res.json({ uid: dernierUID });
+});
+
+// API pour statut complet
+app.get("/api/status", (req, res) => {
+  res.json({
+    dernierUID: dernierUID,
+    historique: historique
   });
 });
 
-app.get("/api/led/off", (req, res) => {
-  portSerie.write("OFF\n", (err) => {
-    if (err) {
-      console.error("Erreur en envoyant la commande", err);
-      return res.status(500).send("Erreur en envoyant la commande à l'Arduino");
-    }
-    console.log("Commande LED OFF envoyée");
-    res.send("Commande LED OFF envoyée à l'Arduino");
-  });
-});
-
-// Serveur HTTP écoute
 app.listen(portHttp, () => {
-  console.log(`Serveur HTTP démarré sur http://localhost:${portHttp}`);
+  console.log(`🌐 Serveur en ligne sur http://localhost:${portHttp}`);
 });
-
