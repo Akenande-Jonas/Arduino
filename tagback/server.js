@@ -39,7 +39,7 @@ parser.on("data", (data) => {
 
 portSerie.open((err) => {
   if (err) console.error("Erreur port série:", err);
-  else console.log("✅ Port série connecté.");
+  else console.log("Port série connecté.");
 });
 
 app.use(express.static(path.join(__dirname, "public"))); // Servir HTML/CSS/JS

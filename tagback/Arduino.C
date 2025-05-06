@@ -1,50 +1,51 @@
 #include <SPI.h>
 #include <MFRC522.h>
 
+// Broches du module RFID
+#define SS_PIN 10    // NSS / SDA
 #define RST_PIN 9
-#define SS_PIN 10
 
-MFRC522 rfid(SS_PIN, RST_PIN);
+// LEDs
+#define RED_LED 8
+#define GREEN_LED 7
 
-// Remplace par l'UID de ton badge autorisé (trouvé dans le moniteur série)
-byte uidAutorise[] = { 0xDE, 0xAD, 0xBE, 0xEF }; // Exemple
+MFRC522 rfid(SS_PIN, RST_PIN); // Crée une instance MFRC522
 
 void setup() {
   Serial.begin(9600);
-  SPI.begin();
-  rfid.PCD_Init();
-  Serial.println("Scanner un badge RFID...");
+  SPI.begin();          // Initialise la communication SPI
+  rfid.PCD_Init();      // Initialise le module RFID
+  Serial.println("Approche une carte RFID...");
+
+  // Initialisation des LEDs
+  pinMode(RED_LED, OUTPUT);
+  pinMode(GREEN_LED, OUTPUT);
+
+  digitalWrite(RED_LED, LOW);
+  digitalWrite(GREEN_LED, LOW);
 }
 
 void loop() {
-  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial())
+  // Si pas de nouvelle carte, on ne fait rien
+  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) {
+    digitalWrite(RED_LED, HIGH);
+    digitalWrite(GREEN_LED, LOW);
     return;
+  }
 
-  Serial.print("Badge détecté UID: ");
+  // Si carte détectée
+  Serial.print("Carte détectée, UID : ");
   for (byte i = 0; i < rfid.uid.size; i++) {
     Serial.print(rfid.uid.uidByte[i] < 0x10 ? " 0" : " ");
     Serial.print(rfid.uid.uidByte[i], HEX);
   }
   Serial.println();
 
-  if (uidValide(rfid.uid.uidByte, rfid.uid.size)) {
-    Serial.println("Accès autorisé");
-    // Tu peux activer un relais ou LED ici
-  } else {
-    Serial.println("Accès refusé");
-    // Alarme ou LED rouge par exemple
-  }
+  // Allume LED verte
+  digitalWrite(RED_LED, LOW);
+  digitalWrite(GREEN_LED, HIGH);
 
-  rfid.PICC_HaltA();
-  rfid.PCD_StopCrypto1();
-}
-
-bool uidValide(byte *uid, byte size) {
-  if (size != sizeof(uidAutorise)) return false;
-
-  for (byte i = 0; i < size; i++) {
-    if (uid[i] != uidAutorise[i]) return false;
-  }
-
-  return true;
+  delay(2000); // Garde la LED verte allumée pendant 2 secondes
+  rfid.PICC_HaltA();     // Arrête la communication avec la carte
+  rfid.PCD_StopCrypto1(); // Stoppe la crypto
 }
